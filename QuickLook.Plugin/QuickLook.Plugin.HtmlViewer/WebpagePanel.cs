@@ -50,14 +50,39 @@ public class WebpagePanel : UserControl
             InitializeComponent();
     }
 
+    /// <summary>
+    ///     True when WPF reports no hardware rendering tier (Tier 0 = software-only
+    ///     compositing). This is the proven signal for GPU-less hosts such as Proxmox/QEMU
+    ///     VMs with a virtual display adapter (QXL), or RDP sessions, where WebView2's
+    ///     Chromium GPU process cannot initialise inside its sandbox and crashes at startup
+    ///     (STATUS_BREAKPOINT), causing WebView2 to disable rendering and the panel to render
+    ///     blank. The high word of <see cref="System.Windows.Media.RenderCapability.Tier"/>
+    ///     is the rendering tier; 0 means no GPU acceleration.
+    /// </summary>
+    private static bool IsGpuUnavailable()
+    {
+        return (System.Windows.Media.RenderCapability.Tier >> 16) == 0;
+    }
+
     protected virtual void InitializeComponent()
     {
+        var creationProperties = new CoreWebView2CreationProperties
+        {
+            UserDataFolder = Path.Combine(SettingHelper.LocalDataPath, @"WebView2_Data\"),
+        };
+
+        // On GPU-less hosts the Chromium GPU process crashes inside its sandbox and WebView2
+        // gives up rendering, leaving a blank panel. Dropping only the GPU-process sandbox
+        // lets it fall back to software rendering. We do this ONLY when no real GPU is present
+        // (Tier 0); when a hardware GPU exists the full sandbox is kept intact.
+        if (IsGpuUnavailable())
+        {
+            creationProperties.AdditionalBrowserArguments = "--disable-gpu-sandbox";
+        }
+
         _webView = new WebView2
         {
-            CreationProperties = new CoreWebView2CreationProperties
-            {
-                UserDataFolder = Path.Combine(SettingHelper.LocalDataPath, @"WebView2_Data\"),
-            },
+            CreationProperties = creationProperties,
 
             // Prevent white flash in dark mode
             DefaultBackgroundColor = OSThemeHelper.AppsUseDarkTheme() ? Color.FromArgb(255, 32, 32, 32) : Color.White,
